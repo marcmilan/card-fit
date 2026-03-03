@@ -406,12 +406,6 @@ export default function ScreenshotFlow({ card, existingStatement, onSave, onCanc
 
         {/* Hidden file input */}
         <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={handleFileChange}
-          // Trigger automatically if explain was already dismissed
           ref={(el) => {
             ;(fileInputRef as React.MutableRefObject<HTMLInputElement | null>).current = el
             if (autoTrigger && el) {
@@ -419,6 +413,10 @@ export default function ScreenshotFlow({ card, existingStatement, onSave, onCanc
               setTimeout(() => el.click(), 50)
             }
           }}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={handleFileChange}
         />
 
         {step === 'explain' && (
