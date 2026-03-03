@@ -1,10 +1,13 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useCryptoKey } from '../context/CryptoKeyContext'
 import { useCards } from '../hooks/useCards'
 import { useStatements } from '../hooks/useStatements'
 import { useTimeline } from '../hooks/useTimeline'
 import { isTightWindow } from '../lib/timeline'
 import { cardDisplayName } from '../types'
+import { findUrgentCards, composeUrgencyDigest } from '../lib/digest'
+import { getRelayUrl, sendNow } from '../lib/relay'
+import { getRelaySecret } from './RelaySettings'
 import type { Card } from '../types'
 import type { StatementWithStatus } from '../hooks/useStatements'
 import type { DashboardBucket } from '../lib/timeline'
@@ -12,6 +15,7 @@ import CardForm from './CardForm'
 import CardDetail from './CardDetail'
 import PayCycleForm from './PayCycleForm'
 import IncomeTimeline from './IncomeTimeline'
+import Settings from './Settings'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -179,6 +183,7 @@ export default function Dashboard() {
   const [selectedCard, setSelectedCard] = useState<Card | undefined>()
   const [showPayCycleForm, setShowPayCycleForm] = useState(false)
   const [showIncomeTimeline, setShowIncomeTimeline] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const [sortBy, setSortBy] = useState<'due' | 'alpha'>('due')
 
   function reloadAll() {
@@ -186,6 +191,35 @@ export default function Dashboard() {
     reloadStatements()
     reloadTimeline()
   }
+
+  // Urgency fallback: on app open, check for cards due within 3 days with no income confirmed
+  useEffect(() => {
+    if (!cryptoKey || !cards.length || !statements.length) return
+    if (!getRelayUrl()) return  // relay not configured, skip
+
+    async function checkUrgency() {
+      const confirmedEvents = incomeEvents.filter(e => e.isConfirmed)
+      const rawStatements = statements.map(s => ({
+        id: s.id, cardId: s.cardId, cycleMonth: s.cycleMonth,
+        statementBalance: s.statementBalance, minimumDue: s.minimumDue,
+        dueDate: s.dueDate, createdAt: s.createdAt,
+      }))
+
+      const urgent = findUrgentCards(cards, rawStatements, statements.flatMap(s => s.payments), confirmedEvents)
+      if (urgent.length === 0) return
+
+      const secret = cryptoKey ? await getRelaySecret(cryptoKey) : null
+      if (!secret) return
+
+      const phone = localStorage.getItem('card-fit:phone')
+      if (!phone) return
+
+      const message = composeUrgencyDigest(urgent, '')
+      await sendNow({ token: crypto.randomUUID(), phone, message }, secret).catch(() => {})
+    }
+
+    checkUrgency()
+  }, [cards.length, statements.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sort cardIds within each bucket when alpha mode is on
   function sortedBucket(bucket: DashboardBucket): DashboardBucket {
@@ -230,10 +264,11 @@ export default function Dashboard() {
             {sortBy === 'due' ? 'by due date' : 'a–z'}
           </button>
           <button
-            onClick={lock}
-            className="text-zinc-600 hover:text-white transition text-sm px-2 py-1 rounded-lg hover:bg-zinc-800"
+            onClick={() => setShowSettings(true)}
+            className="text-zinc-600 hover:text-white transition text-base px-2 py-1 rounded-lg hover:bg-zinc-800"
+            title="settings"
           >
-            lock
+            ⚙️
           </button>
         </div>
       </div>
@@ -358,6 +393,9 @@ export default function Dashboard() {
           onClose={() => setShowIncomeTimeline(false)}
           onDataChange={() => { reloadTimeline(); setShowIncomeTimeline(true) }}
         />
+      )}
+      {showSettings && (
+        <Settings onClose={() => setShowSettings(false)} />
       )}
       {selectedCard && (
         <CardDetail
