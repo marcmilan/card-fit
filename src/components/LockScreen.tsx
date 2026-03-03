@@ -1,12 +1,41 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { deriveKey, getOrCreateSalt } from '../crypto'
 import { useCryptoKey } from '../context/CryptoKeyContext'
+import {
+  hasBiometricCredential,
+  unlockWithBiometric,
+  isWebAuthnAvailable,
+} from '../crypto/webauthn'
 
 export default function LockScreen() {
   const { setKey } = useCryptoKey()
   const [passphrase, setPassphrase] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [bioLoading, setBioLoading] = useState(false)
+  const canUseBio = isWebAuthnAvailable() && hasBiometricCredential()
+
+  // Auto-trigger biometric on mount if available
+  useEffect(() => {
+    if (canUseBio) handleBiometric()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleBiometric() {
+    setBioLoading(true)
+    setError('')
+    try {
+      const key = await unlockWithBiometric()
+      if (key) {
+        setKey(key)
+      } else {
+        setError('biometric unlock cancelled — enter your passphrase')
+      }
+    } catch {
+      setError('biometric unlock failed — enter your passphrase')
+    } finally {
+      setBioLoading(false)
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -33,13 +62,36 @@ export default function LockScreen() {
           <p className="mt-1 text-sm text-zinc-500">welcome back</p>
         </div>
 
+        {/* Biometric button */}
+        {canUseBio && (
+          <button
+            onClick={handleBiometric}
+            disabled={bioLoading}
+            className="w-full rounded-2xl bg-zinc-900 border border-zinc-800 hover:border-violet-500 text-white py-4 mb-4 flex items-center justify-center gap-3 transition disabled:opacity-50"
+          >
+            <span className="text-2xl">{bioLoading ? '…' : '🔐'}</span>
+            <span className="text-sm font-medium">
+              {bioLoading ? 'checking biometrics…' : 'unlock with Face ID / fingerprint'}
+            </span>
+          </button>
+        )}
+
+        {/* Divider */}
+        {canUseBio && (
+          <div className="flex items-center gap-3 mb-4">
+            <div className="flex-1 h-px bg-zinc-800" />
+            <span className="text-zinc-600 text-xs">or</span>
+            <div className="flex-1 h-px bg-zinc-800" />
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-3">
           <input
             type="password"
             placeholder="passphrase"
             value={passphrase}
             onChange={e => setPassphrase(e.target.value)}
-            autoFocus
+            autoFocus={!canUseBio}
             className="w-full rounded-2xl bg-zinc-900 border border-zinc-800 text-white placeholder-zinc-600 px-4 py-3.5 text-sm focus:outline-none focus:border-violet-500 transition"
           />
           {error && <p className="text-red-400 text-xs px-1">{error}</p>}

@@ -4,10 +4,11 @@ import { useCryptoKey } from '../context/CryptoKeyContext'
 import { cards as cardsDb, payCycles as payCyclesDb } from '../db'
 import { cardDisplayName } from '../types'
 import type { Card, PayCycle, PayFrequency } from '../types'
+import { setupBiometric, isWebAuthnAvailable } from '../crypto/webauthn'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type Step = 'passphrase' | 'first-card' | 'pay-period'
+type Step = 'passphrase' | 'biometric' | 'first-card' | 'pay-period'
 
 function randomId() { return crypto.randomUUID() }
 
@@ -363,15 +364,96 @@ function PayPeriodStep({ cryptoKey, onDone }: PayPeriodStepProps) {
   )
 }
 
+// ── Biometric setup step ──────────────────────────────────────────────────────
+
+interface BiometricStepProps {
+  cryptoKey: CryptoKey
+  onNext: () => void
+}
+
+function BiometricStep({ cryptoKey, onNext }: BiometricStepProps) {
+  const [setting, setSetting] = useState(false)
+  const [result, setResult] = useState<'idle' | 'ok' | 'fail'>('idle')
+
+  async function handleEnable() {
+    setSetting(true)
+    try {
+      const ok = await setupBiometric(cryptoKey)
+      setResult(ok ? 'ok' : 'fail')
+    } catch {
+      setResult('fail')
+    } finally {
+      setSetting(false)
+    }
+  }
+
+  if (result === 'ok') {
+    return (
+      <div className="text-center space-y-6">
+        <div className="text-5xl">🔐✓</div>
+        <div>
+          <p className="text-white font-bold text-xl mb-1">biometrics enabled</p>
+          <p className="text-zinc-500 text-sm">you can unlock with Face ID / fingerprint from now on</p>
+        </div>
+        <button
+          onClick={onNext}
+          className="w-full rounded-2xl bg-violet-600 hover:bg-violet-500 text-white font-semibold py-3.5 text-sm transition"
+        >
+          continue →
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div className="text-center mb-8">
+        <div className="text-4xl mb-3">🔐</div>
+        <h2 className="text-white font-bold text-xl mb-2">enable biometrics?</h2>
+        <p className="text-zinc-500 text-sm leading-relaxed max-w-xs mx-auto">
+          unlock instantly with Face ID or fingerprint — your passphrase remains as the backup
+        </p>
+      </div>
+
+      {result === 'fail' && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-3 mb-4 text-xs text-amber-400">
+          biometrics not available on this device — you can enable it later in settings
+        </div>
+      )}
+
+      <div className="space-y-3">
+        <button
+          onClick={handleEnable}
+          disabled={setting}
+          className="w-full rounded-2xl bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white font-semibold py-3.5 text-sm transition"
+        >
+          {setting ? 'setting up…' : 'enable Face ID / fingerprint'}
+        </button>
+        <button
+          onClick={onNext}
+          className="w-full text-center text-xs text-zinc-600 hover:text-zinc-400 transition py-2"
+        >
+          skip for now
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── Main Onboarding ───────────────────────────────────────────────────────────
 
 export default function Onboarding() {
   const { setKey } = useCryptoKey()
   const [step, setStep] = useState<Step>('passphrase')
   const [derivedKey, setDerivedKey] = useState<CryptoKey | null>(null)
+  const showBiometricStep = isWebAuthnAvailable()
 
   function handlePassphraseDone(key: CryptoKey) {
     setDerivedKey(key)
+    setStep(showBiometricStep ? 'biometric' : 'first-card')
+  }
+
+  function handleBiometricDone() {
     setStep('first-card')
   }
 
@@ -383,7 +465,15 @@ export default function Onboarding() {
     if (derivedKey) setKey(derivedKey)
   }
 
-  const stepIndex = step === 'passphrase' ? 0 : step === 'first-card' ? 1 : 2
+  const totalSteps = showBiometricStep ? 4 : 3
+  const stepIndex = (() => {
+    switch (step) {
+      case 'passphrase': return 0
+      case 'biometric':  return 1
+      case 'first-card': return showBiometricStep ? 2 : 1
+      case 'pay-period': return showBiometricStep ? 3 : 2
+    }
+  })()
 
   return (
     <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center px-6">
@@ -394,10 +484,13 @@ export default function Onboarding() {
           <h1 className="mt-2 text-xl font-bold text-white tracking-tight">card-fit</h1>
         </div>
 
-        <StepDots current={stepIndex} total={3} />
+        <StepDots current={stepIndex} total={totalSteps} />
 
         {step === 'passphrase' && (
           <PassphraseStep onNext={handlePassphraseDone} />
+        )}
+        {step === 'biometric' && derivedKey && (
+          <BiometricStep cryptoKey={derivedKey} onNext={handleBiometricDone} />
         )}
         {step === 'first-card' && derivedKey && (
           <FirstCardStep
