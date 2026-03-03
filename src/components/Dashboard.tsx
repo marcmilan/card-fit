@@ -11,6 +11,7 @@ import type { DashboardBucket } from '../lib/timeline'
 import CardForm from './CardForm'
 import CardDetail from './CardDetail'
 import PayCycleForm from './PayCycleForm'
+import IncomeTimeline from './IncomeTimeline'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -171,12 +172,13 @@ export default function Dashboard() {
   const { cryptoKey, lock } = useCryptoKey()
   const { cards, reload: reloadCards } = useCards(cryptoKey)
   const { statements, reload: reloadStatements } = useStatements(cryptoKey)
-  const { payCycles, buckets, reload: reloadTimeline } = useTimeline(cryptoKey, cards, statements)
+  const { payCycles, incomeEvents, timeline, buckets, reload: reloadTimeline } = useTimeline(cryptoKey, cards, statements)
 
   const [showCardForm, setShowCardForm] = useState(false)
   const [editingCard, setEditingCard] = useState<Card | undefined>()
   const [selectedCard, setSelectedCard] = useState<Card | undefined>()
   const [showPayCycleForm, setShowPayCycleForm] = useState(false)
+  const [showIncomeTimeline, setShowIncomeTimeline] = useState(false)
   const [sortBy, setSortBy] = useState<'due' | 'alpha'>('due')
 
   function reloadAll() {
@@ -309,6 +311,13 @@ export default function Dashboard() {
       {/* FABs */}
       {cards.length > 0 && (
         <div className="fixed bottom-6 right-4 flex flex-col items-end gap-3">
+          <button
+            onClick={() => setShowIncomeTimeline(true)}
+            className="w-10 h-10 rounded-full bg-zinc-800 hover:bg-zinc-700 text-white shadow-lg flex items-center justify-center transition text-base"
+            title="income timeline"
+          >
+            💰
+          </button>
           {payCycles.length > 0 && (
             <button
               onClick={() => setShowPayCycleForm(true)}
@@ -340,6 +349,14 @@ export default function Dashboard() {
           isPrimary={payCycles.length === 0}
           onSave={() => { setShowPayCycleForm(false); reloadTimeline() }}
           onCancel={() => setShowPayCycleForm(false)}
+        />
+      )}
+      {showIncomeTimeline && (
+        <IncomeTimeline
+          timeline={timeline}
+          incomeEvents={incomeEvents}
+          onClose={() => setShowIncomeTimeline(false)}
+          onDataChange={() => { reloadTimeline(); setShowIncomeTimeline(true) }}
         />
       )}
       {selectedCard && (
