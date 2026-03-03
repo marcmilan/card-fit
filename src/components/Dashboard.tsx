@@ -2,11 +2,15 @@ import { useState } from 'react'
 import { useCryptoKey } from '../context/CryptoKeyContext'
 import { useCards } from '../hooks/useCards'
 import { useStatements } from '../hooks/useStatements'
+import { useTimeline } from '../hooks/useTimeline'
+import { isTightWindow } from '../lib/timeline'
 import { cardDisplayName } from '../types'
 import type { Card } from '../types'
 import type { StatementWithStatus } from '../hooks/useStatements'
+import type { DashboardBucket } from '../lib/timeline'
 import CardForm from './CardForm'
 import CardDetail from './CardDetail'
+import PayCycleForm from './PayCycleForm'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -41,13 +45,17 @@ function statusBadge(status: StatementWithStatus['status']) {
 interface CardRowProps {
   card: Card
   statement?: StatementWithStatus
+  bucketIncomeDate?: Date
   onClick: () => void
 }
 
-function CardRow({ card, statement, onClick }: CardRowProps) {
+function CardRow({ card, statement, bucketIncomeDate, onClick }: CardRowProps) {
   const days = statement ? daysUntil(statement.dueDate) : null
   const isPaid = statement?.status === 'paid' || statement?.status === 'overpaid'
   const urgency = statement && days !== null ? urgencyBorder(days, statement.status) : ''
+  const tight = statement && bucketIncomeDate
+    ? isTightWindow(new Date(statement.dueDate + 'T00:00:00'), bucketIncomeDate)
+    : false
 
   return (
     <button
@@ -55,24 +63,24 @@ function CardRow({ card, statement, onClick }: CardRowProps) {
       className={`w-full text-left bg-zinc-900 rounded-2xl p-4 transition hover:bg-zinc-800 ${urgency} ${isPaid ? 'opacity-50' : ''}`}
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-3">
-          {/* Color dot */}
+        <div className="flex items-center gap-3 min-w-0">
           <div
             className="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-0.5"
             style={{ backgroundColor: card.color ?? '#7c3aed' }}
           />
-          <div>
-            <p className={`text-sm font-semibold ${isPaid ? 'text-zinc-500' : 'text-white'}`}>
+          <div className="min-w-0">
+            <p className={`text-sm font-semibold truncate ${isPaid ? 'text-zinc-500' : 'text-white'}`}>
               {cardDisplayName(card)}
             </p>
             {statement && (
-              <p className="text-xs text-zinc-600 mt-0.5">
-                due {formatDate(statement.dueDate)}
+              <p className="text-xs text-zinc-600 mt-0.5 flex items-center gap-1 flex-wrap">
+                <span>due {formatDate(statement.dueDate)}</span>
                 {days !== null && !isPaid && days <= 7 && (
-                  <span className={days <= 3 ? 'text-red-400 ml-1' : 'text-amber-400 ml-1'}>
-                    · {days === 0 ? 'today' : days < 0 ? `${Math.abs(days)}d overdue` : `${days}d`}
+                  <span className={days <= 3 ? 'text-red-400' : 'text-amber-400'}>
+                    · {days === 0 ? 'today!' : days < 0 ? `${Math.abs(days)}d overdue` : `${days}d`}
                   </span>
                 )}
+                {tight && !isPaid && <span className="text-amber-400">⚠️ tight window</span>}
               </p>
             )}
             {!statement && (
@@ -85,7 +93,10 @@ function CardRow({ card, statement, onClick }: CardRowProps) {
             <>
               {statusBadge(statement.status)}
               {!isPaid && (
-                <p className="text-sm font-bold text-white">${statement.minimumDue} <span className="text-zinc-500 font-normal text-xs">min</span></p>
+                <p className="text-sm font-bold text-white">
+                  ${statement.minimumDue}
+                  <span className="text-zinc-500 font-normal text-xs"> min</span>
+                </p>
               )}
             </>
           )}
@@ -95,28 +106,61 @@ function CardRow({ card, statement, onClick }: CardRowProps) {
   )
 }
 
-// ── Section ───────────────────────────────────────────────────────────────────
+// ── Bucket section ────────────────────────────────────────────────────────────
 
-interface SectionProps {
-  label: string
-  sublabel?: string
-  total?: number
-  children: React.ReactNode
+interface BucketSectionProps {
+  bucket: DashboardBucket
+  cards: Card[]
+  statements: StatementWithStatus[]
+  onCardClick: (card: Card) => void
 }
 
-function Section({ label, sublabel, total, children }: SectionProps) {
+function BucketSection({ bucket, cards, statements, onCardClick }: BucketSectionProps) {
+  const bucketCards = bucket.cardIds
+    .map(id => cards.find(c => c.id === id))
+    .filter(Boolean) as Card[]
+
+  const currentStatement = (cardId: string) =>
+    statements
+      .filter(s => s.cardId === cardId)
+      .sort((a, b) => b.cycleMonth.localeCompare(a.cycleMonth))[0]
+
+  const unpaidTotal = bucketCards.reduce((sum, card) => {
+    const s = currentStatement(card.id)
+    if (!s || s.status === 'paid' || s.status === 'overpaid') return sum
+    return sum + Math.max(0, s.minimumDue - s.totalPaid)
+  }, 0)
+
+  const isConfirmed = bucket.incomePoint?.isConfirmed ?? false
+
   return (
     <div className="mb-6">
       <div className="flex items-baseline justify-between mb-2 px-1">
-        <div>
-          <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">{label}</span>
-          {sublabel && <span className="text-xs text-zinc-600 ml-2">{sublabel}</span>}
+        <div className="flex items-center gap-1.5">
+          <span className={`text-xs font-semibold uppercase tracking-wider ${
+            bucket.isUnassigned ? 'text-zinc-600' : 'text-zinc-400'
+          }`}>
+            {bucket.isUnassigned ? '── unassigned' : bucket.label}
+          </span>
+          {!bucket.isUnassigned && !isConfirmed && (
+            <span className="text-zinc-600 text-xs" title="projected">~</span>
+          )}
         </div>
-        {total !== undefined && total > 0 && (
-          <span className="text-xs text-zinc-500">${total.toLocaleString()} total</span>
+        {unpaidTotal > 0 && (
+          <span className="text-xs text-zinc-600">${unpaidTotal.toLocaleString()} remaining</span>
         )}
       </div>
-      <div className="space-y-2">{children}</div>
+      <div className="space-y-2">
+        {bucketCards.map(card => (
+          <CardRow
+            key={card.id}
+            card={card}
+            statement={currentStatement(card.id)}
+            bucketIncomeDate={bucket.incomePoint?.date}
+            onClick={() => onCardClick(card)}
+          />
+        ))}
+      </div>
     </div>
   )
 }
@@ -127,47 +171,41 @@ export default function Dashboard() {
   const { cryptoKey, lock } = useCryptoKey()
   const { cards, reload: reloadCards } = useCards(cryptoKey)
   const { statements, reload: reloadStatements } = useStatements(cryptoKey)
+  const { payCycles, buckets, reload: reloadTimeline } = useTimeline(cryptoKey, cards, statements)
 
   const [showCardForm, setShowCardForm] = useState(false)
   const [editingCard, setEditingCard] = useState<Card | undefined>()
   const [selectedCard, setSelectedCard] = useState<Card | undefined>()
+  const [showPayCycleForm, setShowPayCycleForm] = useState(false)
   const [sortBy, setSortBy] = useState<'due' | 'alpha'>('due')
 
   function reloadAll() {
     reloadCards()
     reloadStatements()
+    reloadTimeline()
   }
 
-  // Get current statement for a card (most recent cycle)
-  function currentStatement(cardId: string): StatementWithStatus | undefined {
-    return statements
-      .filter(s => s.cardId === cardId)
-      .sort((a, b) => b.cycleMonth.localeCompare(a.cycleMonth))[0]
-  }
-
-  // Sort cards
-  const sortedCards = [...cards].sort((a, b) => {
+  // Sort cardIds within each bucket when alpha mode is on
+  function sortedBucket(bucket: DashboardBucket): DashboardBucket {
     if (sortBy === 'alpha') {
-      return cardDisplayName(a).localeCompare(cardDisplayName(b))
+      const sorted = [...bucket.cardIds].sort((a, b) => {
+        const ca = cards.find(c => c.id === a)
+        const cb = cards.find(c => c.id === b)
+        if (!ca || !cb) return 0
+        return cardDisplayName(ca).localeCompare(cardDisplayName(cb))
+      })
+      return { ...bucket, cardIds: sorted }
     }
-    // By due date — unpaid first, then by days until due
-    const sa = currentStatement(a.id)
-    const sb = currentStatement(b.id)
-    if (!sa && !sb) return 0
-    if (!sa) return 1
-    if (!sb) return -1
-    const daysA = daysUntil(sa.dueDate)
-    const daysB = daysUntil(sb.dueDate)
-    return daysA - daysB
-  })
+    return bucket
+  }
 
-  // Bucket: for now all go into a single "this period" bucket until pay cycle logic lands in Step 3
-  const withStatements = sortedCards.filter(c => currentStatement(c.id))
-  const withoutStatements = sortedCards.filter(c => !currentStatement(c.id))
-  const unpaidTotal = withStatements.reduce((sum, c) => {
-    const s = currentStatement(c.id)
-    if (!s || s.status === 'paid' || s.status === 'overpaid') return sum
-    return sum + s.minimumDue - s.totalPaid
+  // Cards with no statement, not in any bucket
+  const bucketedCardIds = new Set(buckets.flatMap(b => b.cardIds))
+  const unbucketedCards = cards.filter(c => !bucketedCardIds.has(c.id))
+
+  const totalUnpaid = statements.reduce((sum, s) => {
+    if (s.status === 'paid' || s.status === 'overpaid') return sum
+    return sum + Math.max(0, s.minimumDue - s.totalPaid)
   }, 0)
 
   const selectedCardStatements = selectedCard
@@ -182,8 +220,7 @@ export default function Dashboard() {
           <span className="text-lg">💳</span>
           <span className="text-white font-bold text-sm">card-fit</span>
         </div>
-        <div className="flex items-center gap-3">
-          {/* Sort toggle */}
+        <div className="flex items-center gap-2">
           <button
             onClick={() => setSortBy(s => s === 'due' ? 'alpha' : 'due')}
             className="text-xs text-zinc-500 hover:text-white transition px-2 py-1 rounded-lg hover:bg-zinc-800"
@@ -200,9 +237,8 @@ export default function Dashboard() {
       </div>
 
       {/* Body */}
-      <div className="max-w-lg mx-auto px-4 pt-6 pb-24">
+      <div className="max-w-lg mx-auto px-4 pt-6 pb-28">
         {cards.length === 0 ? (
-          /* Empty state */
           <div className="text-center pt-16">
             <div className="text-5xl mb-4">💳</div>
             <h2 className="text-white font-bold text-xl mb-2">no cards yet</h2>
@@ -217,53 +253,71 @@ export default function Dashboard() {
         ) : (
           <>
             {/* Summary pill */}
-            {unpaidTotal > 0 && (
+            {totalUnpaid > 0 && (
               <div className="bg-zinc-900 rounded-2xl p-4 mb-6 flex items-center justify-between">
                 <div>
-                  <p className="text-zinc-500 text-xs">total minimum due</p>
-                  <p className="text-white font-bold text-2xl">${unpaidTotal.toLocaleString()}</p>
+                  <p className="text-zinc-500 text-xs">total remaining</p>
+                  <p className="text-white font-bold text-2xl">${totalUnpaid.toLocaleString()}</p>
                 </div>
                 <span className="text-2xl">📋</span>
               </div>
             )}
 
-            {/* Cards with statements */}
-            {withStatements.length > 0 && (
-              <Section
-                label="cards"
-                total={unpaidTotal}
+            {/* Pay cycle prompt */}
+            {payCycles.length === 0 && (
+              <button
+                onClick={() => setShowPayCycleForm(true)}
+                className="w-full rounded-2xl border border-dashed border-zinc-700 hover:border-violet-500 text-zinc-500 hover:text-white py-4 text-sm transition mb-6 flex items-center justify-center gap-2"
               >
-                {withStatements.map(card => (
-                  <CardRow
-                    key={card.id}
-                    card={card}
-                    statement={currentStatement(card.id)}
-                    onClick={() => setSelectedCard(card)}
-                  />
-                ))}
-              </Section>
+                <span>📅</span>
+                <span>set up your pay schedule to group cards by pay period</span>
+              </button>
             )}
 
-            {/* Cards without statements */}
-            {withoutStatements.length > 0 && (
-              <Section label="no statement yet">
-                {withoutStatements.map(card => (
-                  <CardRow
-                    key={card.id}
-                    card={card}
-                    statement={undefined}
-                    onClick={() => setSelectedCard(card)}
-                  />
-                ))}
-              </Section>
+            {/* Pay-period buckets */}
+            {buckets.map(bucket => (
+              <BucketSection
+                key={bucket.id}
+                bucket={sortedBucket(bucket)}
+                cards={cards}
+                statements={statements}
+                onCardClick={setSelectedCard}
+              />
+            ))}
+
+            {/* Cards with no statement yet */}
+            {unbucketedCards.length > 0 && (
+              <div className="mb-6">
+                <div className="px-1 mb-2">
+                  <span className="text-xs font-semibold text-zinc-600 uppercase tracking-wider">no statement yet</span>
+                </div>
+                <div className="space-y-2">
+                  {unbucketedCards.map(card => (
+                    <CardRow
+                      key={card.id}
+                      card={card}
+                      onClick={() => setSelectedCard(card)}
+                    />
+                  ))}
+                </div>
+              </div>
             )}
           </>
         )}
       </div>
 
-      {/* FAB */}
+      {/* FABs */}
       {cards.length > 0 && (
-        <div className="fixed bottom-6 right-4">
+        <div className="fixed bottom-6 right-4 flex flex-col items-end gap-3">
+          {payCycles.length > 0 && (
+            <button
+              onClick={() => setShowPayCycleForm(true)}
+              className="w-10 h-10 rounded-full bg-zinc-800 hover:bg-zinc-700 text-white shadow-lg flex items-center justify-center transition text-base"
+              title="pay schedule"
+            >
+              📅
+            </button>
+          )}
           <button
             onClick={() => { setEditingCard(undefined); setShowCardForm(true) }}
             className="w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white text-2xl shadow-lg shadow-violet-900/50 flex items-center justify-center transition"
@@ -273,7 +327,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Card form modal */}
+      {/* Modals */}
       {showCardForm && (
         <CardForm
           existing={editingCard}
@@ -281,14 +335,23 @@ export default function Dashboard() {
           onCancel={() => setShowCardForm(false)}
         />
       )}
-
-      {/* Card detail */}
+      {showPayCycleForm && (
+        <PayCycleForm
+          isPrimary={payCycles.length === 0}
+          onSave={() => { setShowPayCycleForm(false); reloadTimeline() }}
+          onCancel={() => setShowPayCycleForm(false)}
+        />
+      )}
       {selectedCard && (
         <CardDetail
           card={selectedCard}
           statements={selectedCardStatements}
           onClose={() => setSelectedCard(undefined)}
-          onEdit={() => { setEditingCard(selectedCard); setShowCardForm(true); setSelectedCard(undefined) }}
+          onEdit={() => {
+            setEditingCard(selectedCard)
+            setShowCardForm(true)
+            setSelectedCard(undefined)
+          }}
           onDataChange={reloadAll}
         />
       )}
