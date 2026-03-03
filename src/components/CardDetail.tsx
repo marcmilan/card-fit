@@ -4,6 +4,7 @@ import type { Card } from '../types'
 import type { StatementWithStatus } from '../hooks/useStatements'
 import StatementForm from './StatementForm'
 import PaymentForm from './PaymentForm'
+import ScreenshotFlow from './ScreenshotFlow'
 
 interface CardDetailProps {
   card: Card
@@ -28,6 +29,7 @@ function formatDate(iso: string) {
 
 export default function CardDetail({ card, statements, onClose, onEdit, onDataChange }: CardDetailProps) {
   const [showStatementForm, setShowStatementForm] = useState(false)
+  const [showScreenshotFlow, setShowScreenshotFlow] = useState(false)
   const [editingStatement, setEditingStatement] = useState<StatementWithStatus | undefined>()
   const [payingStatement, setPayingStatement] = useState<StatementWithStatus | undefined>()
 
@@ -99,7 +101,7 @@ export default function CardDetail({ card, statements, onClose, onEdit, onDataCh
         {/* Actions */}
         <div className="grid grid-cols-2 gap-3 mb-8">
           <button
-            onClick={() => { setEditingStatement(current); setShowStatementForm(true) }}
+            onClick={() => setShowScreenshotFlow(true)}
             className="rounded-2xl bg-zinc-900 border border-zinc-800 hover:border-zinc-600 text-white py-3 text-sm font-medium transition"
           >
             📸 update from screenshot
@@ -160,6 +162,14 @@ export default function CardDetail({ card, statements, onClose, onEdit, onDataCh
       </div>
 
       {/* Modals */}
+      {showScreenshotFlow && (
+        <ScreenshotFlow
+          card={card}
+          existingStatement={current}
+          onSave={() => { setShowScreenshotFlow(false); onDataChange() }}
+          onCancel={() => setShowScreenshotFlow(false)}
+        />
+      )}
       {showStatementForm && (
         <StatementForm
           card={card}
