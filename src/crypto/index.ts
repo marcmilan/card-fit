@@ -1,4 +1,4 @@
-import { hash, ArgonType } from 'argon2-browser'
+import { argon2id, argon2Verify } from 'hash-wasm'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -29,19 +29,22 @@ export function hasSalt(): boolean {
 // ── Key derivation ────────────────────────────────────────────────────────────
 
 export async function deriveKey(passphrase: string, salt: Uint8Array): Promise<CryptoKey> {
-  const result = await hash({
-    pass: passphrase,
+  const hashHex = await argon2id({
+    password: passphrase,
     salt,
-    time: ARGON2_TIME_COST,
-    mem: ARGON2_MEMORY_COST,
     parallelism: ARGON2_PARALLELISM,
-    hashLen: ARGON2_HASH_LENGTH,
-    type: ArgonType.Argon2id,
+    iterations: ARGON2_TIME_COST,
+    memorySize: ARGON2_MEMORY_COST,
+    hashLength: ARGON2_HASH_LENGTH,
+    outputType: 'hex',
   })
+
+  // Convert hex string to raw bytes
+  const keyBytes = new Uint8Array(hashHex.match(/.{2}/g)!.map(b => parseInt(b, 16)))
 
   return crypto.subtle.importKey(
     'raw',
-    result.hash,
+    keyBytes,
     { name: 'AES-GCM' },
     false,       // not extractable
     ['encrypt', 'decrypt']
